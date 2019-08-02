@@ -5,7 +5,7 @@ Plugin URI: http://maxime.sh/google-analytics-post-pageviews
 Description: Retrieves and displays the pageviews for each post by linking to your Google Analytics account.
 Author: Maxime VALETTE
 Author URI: http://maxime.sh
-Version: 1.3.8
+Version: 1.4.4
 */
 
 define('GAPP_SLUG', 'google-analytics-post-pageviews');
@@ -29,9 +29,9 @@ function gapp_config_page() {
 
 }
 
-function gapp_api_call($url, $params = array()) {
+function gapp_api_call($url, $params = array(), $urlEncode = true) {
 
-    $options = get_option('gapp');
+	$options = gapp_options();
 
 	if (time() >= $options['gapp_expires']) {
 
@@ -43,7 +43,7 @@ function gapp_api_call($url, $params = array()) {
 
     foreach ($params as $k => $v) {
 
-        $qs .= '&'.$k.'='.urlencode($v);
+        $qs .= '&'.$k.'='.($urlEncode ? urlencode($v) : $v);
 
     }
 
@@ -86,7 +86,7 @@ function gapp_api_call($url, $params = array()) {
 
 function gapp_refresh_token() {
 
-	$options = get_option('gapp');
+	$options = gapp_options();
 
 	/* If the token has expired, we create it again */
 
@@ -160,10 +160,7 @@ function gapp_refresh_token() {
 
 }
 
-function gapp_conf() {
-
-	/** @var $wpdb WPDB */
-	global $wpdb;
+function gapp_options() {
 
 	$options = get_option('gapp');
 
@@ -176,15 +173,30 @@ function gapp_conf() {
 	}
 
 	if (isset($options['gapp_pnumber'])) unset($options['gapp_pnumber']);
-    if (!isset($options['gapp_psecret'])) $options['gapp_psecret'] = null;
-    if (!isset($options['gapp_gid'])) $options['gapp_gid'] = null;
-    if (!isset($options['gapp_gmail'])) $options['gapp_gmail'] = null;
-    if (!isset($options['gapp_token'])) $options['gapp_token'] = null;
-    if (!isset($options['gapp_token_refresh'])) $options['gapp_token_refresh'] = null;
-    if (!isset($options['gapp_expires'])) $options['gapp_expires'] = null;
-    if (!isset($options['gapp_wid'])) $options['gapp_wid'] = null;
-    if (!isset($options['gapp_cache'])) $options['gapp_cache'] = 60;
-    if (!preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/', $options['gapp_startdate'])) $options['gapp_startdate'] = '2007-09-29';
+	if (!isset($options['gapp_psecret'])) $options['gapp_psecret'] = null;
+	if (!isset($options['gapp_gid'])) $options['gapp_gid'] = null;
+	if (!isset($options['gapp_gmail'])) $options['gapp_gmail'] = null;
+	if (!isset($options['gapp_token'])) $options['gapp_token'] = null;
+	if (!isset($options['gapp_defaultval'])) $options['gapp_defaultval'] = 0;
+	if (!isset($options['gapp_token_refresh'])) $options['gapp_token_refresh'] = null;
+	if (!isset($options['gapp_expires'])) $options['gapp_expires'] = null;
+	if (!isset($options['gapp_wid'])) $options['gapp_wid'] = null;
+	if (!isset($options['gapp_column'])) $options['gapp_column'] = true;
+	if (!isset($options['gapp_trailing'])) $options['gapp_trailing'] = true;
+	if (!isset($options['gapp_cache'])) $options['gapp_cache'] = 60;
+	if (!isset($options['gapp_metric'])) $options['gapp_metric'] = 'ga:pageviews';
+	if (!preg_match('/^([0-9]{4})-([0-9]{2})-([0-9]{2})$/', $options['gapp_startdate'])) $options['gapp_startdate'] = '2007-09-29';
+
+	return $options;
+
+}
+
+function gapp_conf() {
+
+	/** @var $wpdb WPDB */
+	global $wpdb;
+
+	$options = gapp_options();
 
 	$updated = false;
 
@@ -242,6 +254,7 @@ function gapp_conf() {
         $options['gapp_token'] = null;
         $options['gapp_token_refresh'] = null;
         $options['gapp_expires'] = null;
+	    $options['gapp_defaultval'] = 0;
 
         update_option('gapp', $options);
 
@@ -260,7 +273,7 @@ function gapp_conf() {
 
 	    gapp_refresh_token();
 
-	    $options = get_option('gapp');
+	    $options = gapp_options();
 
 	    $updated = true;
 
@@ -298,6 +311,17 @@ function gapp_conf() {
 		if (isset($_POST['gapp_startdate'])) {
 			$options['gapp_startdate'] = $_POST['gapp_startdate'];
 		}
+
+		if (isset($_POST['gapp_defaultval'])) {
+			$options['gapp_defaultval'] = $_POST['gapp_defaultval'];
+		}
+		
+		if (isset($_POST['gapp_metric'])) {
+			$options['gapp_metric'] = $_POST['gapp_metric'];
+		}
+
+		$options['gapp_column'] = (isset($_POST['gapp_column']));
+		$options['gapp_trailing'] = (isset($_POST['gapp_trailing']));
 
 		update_option('gapp', $options);
 
@@ -387,7 +411,7 @@ function gapp_conf() {
         echo '>'.__('None', 'google-analytics-post-pageviews').'</option>';
 
         $wjson = gapp_api_call('https://www.googleapis.com/analytics/v3/management/accounts/~all/webproperties/~all/profiles', array());
-		
+
         if (is_array($wjson->items)) {
 
             foreach ($wjson->items as $item) {
@@ -406,12 +430,29 @@ function gapp_conf() {
 
         echo '</select></p>';
 
+	    echo '<h3><label for="gapp_metric">'.__('Metrics to retrieve:', 'google-analytics-post-pageviews').'</label></h3>';
+	    echo '<p><select id="gapp_metric" name="gapp_metric" style="width: 400px;" />';
+
+	    echo '<option value="ga:pageviews"';
+	    if ($options['gapp_metric'] == 'ga:pageviews') echo ' SELECTED';
+	    echo '>'.__('Page views', 'google-analytics-post-pageviews').'</option>';
+
+	    echo '<option value="ga:uniquePageviews"';
+	    if ($options['gapp_metric'] == 'ga:uniquePageviews') echo ' SELECTED';
+	    echo '>'.__('Unique page views', 'google-analytics-post-pageviews').'</option>';
+
+	    echo '</select></p>';
+
         echo '<h3><label for="gapp_cache">'.__('Cache time:', 'google-analytics-post-pageviews').'</label></h3>';
         echo '<p><select id="gapp_cache" name="gapp_cache">';
 
         echo '<option value="60"';
         if ($options['gapp_cache'] == 60) echo ' SELECTED';
         echo '>'.__('One hour', 'google-analytics-post-pageviews').'</option>';
+
+        echo '<option value="240"';
+        if ($options['gapp_cache'] == 240) echo ' SELECTED';
+        echo '>'.__('Four hours', 'google-analytics-post-pageviews').'</option>';
 
         echo '<option value="360"';
         if ($options['gapp_cache'] == 360) echo ' SELECTED';
@@ -438,6 +479,13 @@ function gapp_conf() {
         echo '<h3><label for="gapp_startdate">'.__('Start date for the analytics:', 'google-analytics-post-pageviews').'</label></h3>';
         echo '<p><input type="text" id="gapp_startdate" name="gapp_startdate" value="'.$options['gapp_startdate'].'" /></p>';
 
+	    echo '<h3><label for="gapp_defaultval">'.__('Default value when a count cannot be fetched:', 'google-analytics-post-pageviews').'</label></h3>';
+	    echo '<p><input type="text" id="gapp_defaultval" name="gapp_defaultval" value="'.$options['gapp_defaultval'].'" /></p>';
+
+	    echo '<h3><input type="checkbox" name="gapp_column" value="1" id="gapp_column" ' . ($options['gapp_column'] ? 'checked' : null) . '> <label for="gapp_column">'.__('Display the Views column in Posts list', 'google-analytics-post-pageviews').'</label></h3>';
+
+	    echo '<h3><input type="checkbox" name="gapp_trailing" value="1" id="gapp_trailing" ' . ($options['gapp_trailing'] ? 'checked' : null) . '> <label for="gapp_trailing">'.__('Search pageviews slugs with trailing slash', 'google-analytics-post-pageviews').'</label></h3>';
+
         echo '<p class="submit" style="text-align: left">';
         wp_nonce_field('gapp', 'gapp-admin');
         echo '<input type="submit" name="submit" value="'.__('Save', 'google-analytics-post-pageviews').' &raquo;" /></p></form></div>';
@@ -446,20 +494,44 @@ function gapp_conf() {
 
 }
 
-function gapp_get_post_pageviews($ID = null, $format = true) {
+function gapp_get_post_pageviews($ID = null, $format = true, $save = true) {
 
-    $options = get_option('gapp');
+	$options = gapp_options();
 
 	if ($ID) {
 
+		$basename = basename(get_permalink($ID));
+
+		if ($options['gapp_trailing']) {
+			$basename .= '/';
+		}
+
 		$gaTransName = 'gapp-transient-'.$ID;
-		$permalink = '/' . basename(get_permalink($ID));
+		$permalink = '/' . (($ID != 1) ? $basename : null);
+		$postID = $ID;
+		$postDate = get_the_date('Y-m-d', $postID);
 
 	} else {
 
-		$gaTransName = 'gapp-transient-'.get_the_ID();
-		$permalink = '/' . basename(get_permalink());
+		$basename = basename(get_permalink());
 
+		if ($options['gapp_trailing']) {
+			$basename .= '/';
+		}
+
+		$gaTransName = 'gapp-transient-'.get_the_ID();
+		$permalink = '/' . $basename;
+		$postID = get_the_ID();
+		$postDate = get_the_date('Y-m-d');
+
+	}
+
+	// Check if the published date is earlier than default start date
+
+	if (strtotime($postDate) > strtotime($options['gapp_startdate'])) {
+		$startDate = $postDate;
+	} else {
+		$startDate = $options['gapp_startdate'];
 	}
 
     $namespaceKey = get_transient('gapp-namespace-key');
@@ -473,7 +545,11 @@ function gapp_get_post_pageviews($ID = null, $format = true) {
 
     $totalResult = get_transient($gaTransName);
 
-    if ($totalResult !== false) {
+    if ($totalResult !== false && is_numeric($totalResult)) {
+
+	    if ($save && !add_post_meta($postID, '_gapp_post_views', $totalResult, true)) {
+		    update_post_meta($postID, '_gapp_post_views', $totalResult);
+	    }
 
 	    return ($format) ? number_format_i18n($totalResult) : $totalResult;
 
@@ -481,60 +557,73 @@ function gapp_get_post_pageviews($ID = null, $format = true) {
 
         if (empty($options['gapp_token'])) {
 
-            return 0;
+            return $options['gapp_defaultval'];
 
         }
 
-	    if ($ID) {
+	    if (!$ID || $ID != 1) {
 
-		    $status = get_post_status($ID);
+		    if ($ID) {
 
-	    } else {
+			    $status = get_post_status($ID);
 
-		    $status = get_post_status(get_the_ID());
+		    } else {
 
-	    }
+			    $status = get_post_status(get_the_ID());
 
-	    if ($status !== 'publish') {
+		    }
 
-		    set_transient($gaTransName, '0', 60 * $options['gapp_cache']);
+		    if ($status !== 'publish') {
 
-		    return 0;
+			    set_transient($gaTransName, '0', 60 * $options['gapp_cache']);
+
+			    if (!add_post_meta($postID, '_gapp_post_views', '0', true)) {
+				    update_post_meta($postID, '_gapp_post_views', '0');
+			    }
+
+			    return 0;
+
+		    }
 
 	    }
 
         $json = gapp_api_call('https://www.googleapis.com/analytics/v3/data/ga',
             array('ids' => 'ga:'.$options['gapp_wid'],
-                'start-date' => $options['gapp_startdate'],
+                'start-date' => $startDate,
                 'end-date' => date('Y-m-d'),
-                'metrics' => 'ga:pageviews',
+                'metrics' => $options['gapp_metric'],
                 'filters' => 'ga:pagePath=@' . $permalink,
                 'max-results' => 1000)
-        );
+        , false);
 
-	    if ( isset( $json->totalsForAllResults->{'ga:pageviews'} ) ) {
+	    if ( isset( $json->totalsForAllResults->{$options['gapp_metric']} ) ) {
 
-		    $totalResult = $json->totalsForAllResults->{'ga:pageviews'};
+		    $totalResult = $json->totalsForAllResults->{$options['gapp_metric']};
+
+		    set_transient($gaTransName, $totalResult, 60 * $options['gapp_cache']);
+
+		    if (!add_post_meta($postID, '_gapp_post_views', $totalResult, true)) {
+			    update_post_meta($postID, '_gapp_post_views', $totalResult);
+		    }
+
+		    return ($format) ? number_format_i18n($totalResult) : $totalResult;
 
 	    } else {
 
-		    $totalResult = 0;
+		    $default_value = $options['gapp_defaultval'];
+
+		    // If we have an old value let's put that instead of the default one in case of an error
+		    $meta_value = get_post_meta($postID, '_gapp_post_views', true);
+
+		    if ($meta_value !== false) {
+			    $default_value = $meta_value;
+		    }
+
+		    set_transient($gaTransName, $default_value, 60 * $options['gapp_cache']);
+
+		    return $options['gapp_defaultval'];
 
 	    }
-
-        if (is_numeric($totalResult) && $totalResult > 0) {
-
-            set_transient($gaTransName, $totalResult, 60 * $options['gapp_cache']);
-
-            return ($format) ? number_format_i18n($totalResult) : $totalResult;
-
-        } else {
-
-            set_transient($gaTransName, '0', 60 * $options['gapp_cache']);
-
-            return 0;
-
-        }
 
     }
 
@@ -544,12 +633,15 @@ function gapp_get_post_pageviews($ID = null, $format = true) {
 
 add_filter('manage_posts_columns', 'gapp_column_views');
 add_action('manage_posts_custom_column', 'gapp_custom_column_views', 6, 2);
+add_action('admin_head', 'gapp_column_style');
+add_filter('manage_edit-post_sortable_columns', 'gapp_manage_sortable_columns');
+add_action('pre_get_posts', 'gapp_pre_get_posts', 1);
 
 function gapp_column_views($defaults) {
 
-	$options = get_option('gapp');
+	$options = gapp_options();
 
-	if (!empty($options['gapp_token'])) {
+	if (!empty($options['gapp_token']) && $options['gapp_column']) {
 
 		$defaults['post_views'] = __('Views');
 
@@ -563,15 +655,45 @@ function gapp_custom_column_views($column_name, $id) {
 
 	if ($column_name === 'post_views') {
 
-		echo gapp_get_post_pageviews(get_the_ID());
+		echo gapp_get_post_pageviews(get_the_ID(), true, true);
 
 	}
 
 }
 
+function gapp_column_style() {
+
+	echo '<style>.column-post_views { width: 120px; }</style>';
+
+}
+
+function gapp_manage_sortable_columns($sortable_columns) {
+
+	$sortable_columns['post_views'] = 'post_views';
+
+	return $sortable_columns;
+
+}
+
+function gapp_pre_get_posts($query) {
+
+	if ($query->is_main_query() && ($orderby = $query->get('orderby'))) {
+		switch ($orderby) {
+			case 'post_views':
+				$query->set('meta_key', '_gapp_post_views');
+				$query->set('orderby', 'meta_value_num');
+
+				break;
+		}
+	}
+
+	return $query;
+
+}
+
 function gapp_admin_notice() {
 
-	$options = get_option('gapp');
+	$options = gapp_options();
 
 	if (current_user_can('manage_options')) {
 
